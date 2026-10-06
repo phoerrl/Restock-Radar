@@ -1,0 +1,10 @@
+import { generateKeyPairSync } from 'node:crypto';
+import { writeFileSync, existsSync } from 'node:fs';
+const file=new URL('../.dev.vars', import.meta.url);
+if(existsSync(file))throw new Error('Local keys already exist; preserve them.');
+const {privateKey}=generateKeyPairSync('ec',{namedCurve:'prime256v1'});
+const jwk=privateKey.export({format:'jwk'});
+const publicKey=Buffer.concat([Buffer.from([4]),Buffer.from(jwk.x,'base64url'),Buffer.from(jwk.y,'base64url')]).toString('base64url');
+const vars={VAPID_PUBLIC_KEY:publicKey,VAPID_PRIVATE_KEY:jwk.d,VAPID_SUBJECT:'https://pokemon-drop-radar-leipzig-paddy.phoerrl.chatgpt.site'};
+writeFileSync(file,Object.entries(vars).map(([k,v])=>`${k}=${v}`).join('\n')+'\n',{mode:0o600});
+process.stdout.write(JSON.stringify(vars));
