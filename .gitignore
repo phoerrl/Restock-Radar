@@ -1,0 +1,15 @@
+node_modules
+dist/
+.next/
+.vinext/
+.wrangler/
+.sites-runtime/
+.env*
+.dev.vars*
+!.env.example
+next-env.d.ts
+*.tsbuildinfo
+*.pem
+.DS_Store
+coverage/
+npm-debug.log*

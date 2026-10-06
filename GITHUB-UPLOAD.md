@@ -1,8 +1,9 @@
 # Quellcode nach GitHub hochladen
 
-Dieser Ordner ist eine schlanke Kopie des aktuellen App-Quellcodes. Er enthaelt
-weniger als 100 Dateien und kann in einem Browser-Upload hochgeladen werden.
-Der urspruengliche Entwicklungsordner und die laufende Website bleiben unveraendert.
+Dieses Repository enthaelt den fuer eigenstaendiges Cloudflare-Hosting
+angepassten Quellcode. Fuer einen erneuten Browser-Upload nur die geaenderten
+Dateien verwenden, nicht `node_modules` oder Build-Ausgaben. Der urspruengliche
+Entwicklungsordner und die laufende Sites-Website bleiben unveraendert.
 
 ## Upload im Browser
 
@@ -14,9 +15,9 @@ Der urspruengliche Entwicklungsordner und die laufende Website bleiben unveraend
 4. Ziehe den INHALT dieses Ordners in die Upload-Flaeche. Behalte die
    Unterordner bei. `package.json` und `README.md` sollen direkt im
    Repository-Hauptverzeichnis liegen, nicht in einem zusaetzlichen Unterordner.
-5. Pruefe, dass `.gitignore`, `.npmrc`, `.env.example` und insbesondere
-   `.openai/hosting.json` mit dabei sind. `.openai/hosting.json` ist eine
-   benoetigte Projektkonfiguration, kein geheimer Zugangsschluessel.
+5. Pruefe, dass `.gitignore`, `.npmrc`, `.env.example` und `wrangler.json`
+   mit dabei sind. `wrangler.json` enthaelt keine geheimen Zugangsschluessel.
+   Die Cloudflare-Version braucht keine `.openai/hosting.json`.
 6. Committe den Upload. Bei einem bereits befuellten Repository verwende
    einen neuen Branch und pruefe die Unterschiede vor dem Zusammenfuehren.
 
@@ -28,7 +29,7 @@ Quelle: https://docs.github.com/en/repositories/working-with-files/managing-file
 
 - App, API-Routen, Kartenansicht und alle tatsaechlich importierten UI-Komponenten.
 - Datenbank-Schema, alle Migrationen und deren Metadaten.
-- Tests, Build-Helfer, Sites-Konfiguration, Dokumentation und PWA-Dateien.
+- Tests, Build-Helfer, Cloudflare-Konfiguration, Dokumentation und PWA-Dateien.
 - `package.json` und die unveraenderte `package-lock.json` fuer die Installation.
 
 Nicht enthalten sind `node_modules`, Build-Ausgaben, lokale Datenbanken,

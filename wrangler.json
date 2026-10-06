@@ -1,0 +1,16 @@
+{
+  "name": "restock-radar",
+  "account_id": "395c47193bd7700197481f35fb1b4d89",
+  "main": "./build/cloudflare-worker.ts",
+  "compatibility_date": "2026-05-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "restock-radar",
+      "database_id": "e499b733-f7e7-49f1-9c21-09e5d7aba3e8",
+      "migrations_dir": "./drizzle"
+    }
+  ]
+}

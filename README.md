@@ -1,6 +1,34 @@
 # Drop Radar Leipzig: Nur Filialen, Bis UVP
 
-Private Web-App fuer physische Laeden, mit Leipzig-Filialverzeichnis, Artikelquellen, Bestandswechsel-Verlauf und vorbereitetem Web Push. Keine Online-Angebote, Versandverfuegbarkeiten, Marketplace-Alarme oder automatische Uebernahme von Shop-Suchergebnissen.
+Web-App fuer physische Laeden, mit oeffentlichem Leipzig-Filialverzeichnis, geschuetzter Verwaltung, Artikelquellen, Bestandswechsel-Verlauf und vorbereitetem Web Push. Keine Online-Angebote, Versandverfuegbarkeiten, Marketplace-Alarme oder automatische Uebernahme von Shop-Suchergebnissen.
+
+## Cloudflare-Hosting Aus GitHub
+
+Dieses Repository ist fuer eigenstaendiges Cloudflare Workers Hosting vorbereitet.
+`wrangler.json` bindet die separate D1-Datenbank `restock-radar` als `DB` ein.
+Die bestehende Sites-App, ihre Datenbank und ihre Push-Schluessel bleiben getrennt.
+Eine `.openai/hosting.json` ist fuer diese Variante nicht erforderlich.
+
+Workers Builds: Repository `phoerrl/Restock-Radar`, Node 24,
+Build `npm run build`, Deployment `npm run deploy:cloudflare`.
+Der Deployment-Befehl wendet zuerst die versionierten D1-Migrationen an und
+veroeffentlicht nur bei Erfolg den gebauten Worker. Das Build-Token braucht
+Workers-Deployment- und D1-Berechtigungen fuer dieses Cloudflare-Konto.
+Noch keine bestehende Produktionsdatenbank wird kopiert.
+
+Runtime-Secrets: `RADAR_ADMIN_PASSWORD` (mindestens 16 Zeichen),
+`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`.
+Keine Secrets in GitHub oder in Build-Logs schreiben.
+`node scripts/push-keys.mjs` erzeugt separate lokale Push-Schluessel in der
+ignorierten `.dev.vars`, ohne sie auszugeben oder vorhandene zu ersetzen.
+
+Die Verwaltungsanmeldung erfolgt unter `/admin` mit Benutzername `admin`.
+Ohne das konfigurierte Passwort bleiben alle Schreibzugriffe und `/mcp`
+gesperrt. Oeffentliche GET-Aufrufe lesen Karte, Quellen und dokumentierte
+Meldungen; persoenliche Notizen deshalb nicht hier speichern.
+Runtime-Secrets werden bei erneuten Deployments mit `--keep-vars` erhalten.
+Ein erfolgreicher Build ist noch kein Nachweis fuer eine oeffentliche URL,
+einen laufenden Scheduler oder eine echte iPhone-Push-Zustellung.
 
 Alle zehn gewuenschten Haendler sind gleichberechtigt im Verzeichnis und Filter enthalten: Smyths Toys, Mueller, Hugendubel, Thalia, MediaMarkt, GALERIA, Rossmann, EDEKA, REWE und Lidl. Keine Kette ist pauschal als UVP-Haendler bestaetigt. Die Preiskontrolle gilt je Artikel und Filialangebot.
 
@@ -63,13 +91,13 @@ Schema.org-Daten beschreiben Angebote, nicht interne Warenbuchungen: https://sch
 
 ## Lokal Starten
 
-Node 22.13 oder neuer. `npm ci`, einmal `node scripts/push-keys.mjs`, dann `npm run dev`. Die generierte `.dev.vars` enthaelt geheime Schluessel und bleibt ignoriert. Produktionswerte gehoeren ausschliesslich in Sites-Runtime-Variablen.
+Node 24. `npm ci`, einmal `node scripts/push-keys.mjs`, dann `npm run dev`. Die generierte `.dev.vars` enthaelt geheime Schluessel und bleibt ignoriert. Fuer lokale Verwaltung ein Testpasswort als `RADAR_ADMIN_PASSWORD` in `.dev.vars` setzen. Produktionswerte gehoeren ausschliesslich in Cloudflare Runtime-Secrets.
 
-D1-Schema: `db/schema.ts`, unveraenderliche Migrationen: `drizzle/`. Vor lokalen Migrationen bauen und Wrangler mit `dist/server/wrangler.json` und `.wrangler/state` verwenden. Die neue Migration `0001_aspiring_rockslide.sql` ergaenzt UVP-Referenzen und Filialpreis-Belege; bestehende Daten bleiben erhalten. Alle Migrationen in Reihenfolge anwenden, keine Tabellen zur Laufzeit erstellen.
+D1-Schema: `db/schema.ts`, unveraenderliche Migrationen: `drizzle/`. Lokale Migrationen: `npx wrangler d1 migrations apply DB --local --config wrangler.json --persist-to .wrangler/state`. Die neue Migration `0001_aspiring_rockslide.sql` ergaenzt UVP-Referenzen und Filialpreis-Belege; bestehende Daten bleiben erhalten. Alle Migrationen in Reihenfolge anwenden, keine Tabellen zur Laufzeit erstellen.
 
 ## Spaetere Hintergrundanbindung
 
-Erst nach echter Datenquellen-Verifizierung und erfolgreicher privater Veroeffentlichung einen Zeitplan anbinden. Sites-Authentifizierung schuetzt alle Routen des persoenlichen Radars. Ein spaeterer Lauf ruft `get_site` fuer genau dieses Site-Projekt auf und verwendet dessen aktuellen `siwc_bypass_bearer_token` ausschliesslich im Header `OAI-Sites-Authorization: Bearer ...` an diese Site. Einmal POST `/api/background`, danach per GET gespeicherte Ergebnisse und `schedulerAt` pruefen. Kein Rebuild bei einer Datenaktualisierung.
+Erst nach echter Datenquellen-Verifizierung und erfolgreicher Veroeffentlichung einen Zeitplan anbinden. Externe Aufrufe von POST `/api/background` brauchen `Authorization: Bearer <RADAR_ADMIN_PASSWORD>` ausschliesslich im Header an diese App. Danach per GET gespeicherte Ergebnisse und `schedulerAt` pruefen. Ein Cloudflare-Cron-Trigger ist in dieser Variante noch nicht eingerichtet. Kein Rebuild bei einer Datenaktualisierung.
 
 `/mcp` bietet `check_pokemon_drops`. Keine Zugangsdaten in Zeitplan-Prompts speichern. Bestehende passende Zeitplaene wiederverwenden. Ohne relevante Aenderung still bleiben. Der Pause-Schalter gilt auch im Hintergrund. `PUT /api/background` speichert nur Zeitplan-Metadaten; es startet keinen Scheduler.
 
@@ -92,4 +120,4 @@ Zusaetzliche Tests pruefen alle zehn Ketten, Cent-Vergleiche, EUR-Pflicht, fehle
 
 Geprueft am 06.10.2026. Adressen belegen weder Pokemon-Sortiment noch Preise oder aktuelle Verfuegbarkeit.
 
-`node node_modules/typescript/bin/tsc --noEmit` prueft TypeScript. Der Sites-Build erfolgt mit dem gebuendelten `build-site.mjs`.
+`node node_modules/typescript/bin/tsc --noEmit` prueft TypeScript. `npm run build` baut den eigenstaendigen Cloudflare-Worker. Die zusaetzlichen Zugriffstests pruefen oeffentliche Lesezugriffe, gesperrte Schreibzugriffe, ungueltige und UTF-8-Zugangsdaten, Origin-Pruefung und HTTPS. Stand: 93 Tests erfolgreich.
