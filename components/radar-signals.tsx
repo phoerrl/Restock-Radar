@@ -16,22 +16,22 @@ async function api(data?:unknown):Promise<Signals & {result?:{checked:number;imp
   const r=await fetch("/api/signals",data?{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)}:{cache:"no-store"});
   let j:Signals & {error?:string;result?:{checked:number;imported:number}};try{j=await r.json() as typeof j;}catch{throw new Error("Hinweise nicht erreichbar. Bitte neu öffnen.");}if(!r.ok)throw new Error(j.error||"Hinweise nicht erreichbar.");return j;
 }
-export function RadarSignals({scanVersion,reportTarget,onReportOpened}:{scanVersion:number|null;reportTarget?:Store|null;onReportOpened?:()=>void}) {
+export function RadarSignals({scanVersion,reportTarget,onReportOpened,readOnly=false}:{scanVersion:number|null;reportTarget?:Store|null;onReportOpened?:()=>void;readOnly?:boolean}) {
   const [state,setState]=useState<Signals|null>(null),[error,setError]=useState(""),[notice,setNotice]=useState(""),[busy,setBusy]=useState(false),[shop,setShop]=useState("all");
   const [dialog,setDialog]=useState(false),[editing,setEditing]=useState<Observation|null>(null),[retailer,setRetailer]=useState("Hugendubel"),[kind,setKind]=useState<Observation["kind"]>("seen"),[source,setSource]=useState<Observation["source"]>("personal"),[precision,setPrecision]=useState<Observation["time_precision"]>("minute"),[other,setOther]=useState(false),[address,setAddress]=useState("");
   const reload=useCallback(()=>api().then(setState).catch(e=>setError(e.message)),[]);
   useEffect(()=>{void reload();},[reload,scanVersion]);
   useEffect(()=>{const timer=window.setInterval(()=>{if(document.visibilityState==="visible")void reload();},60000);return()=>clearInterval(timer);},[reload]);
-  useEffect(()=>{if(!reportTarget||!state)return;setEditing(null);setAddress(reportTarget.address);setRetailer(reportTarget.retailer);setKind("seen");setSource("personal");setPrecision("minute");setOther(false);setError("");setDialog(true);onReportOpened?.();},[reportTarget,state,onReportOpened]);
-  async function refresh(){setBusy(true);setError("");try{const data=await api({action:"refresh"});setState(data);setNotice(data.result?.checked?`${data.result.checked} öffentliche Feeds geprüft; ${data.result.imported} neue Prüfkandidaten.`:"Quellen sind noch im Prüfintervall. Nach einer Blockade: 30 Minuten Abstand.");}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
-  function open(o:Observation|null=null,branch?:Signals["branches"][number]){setEditing(o);setAddress(o?.address||branch?.address||"");setRetailer(o?.retailer||branch?.retailer||"Hugendubel");setKind(o?.kind||"seen");setSource(o?.source||"personal");setPrecision(o?.time_precision||"minute");setOther(false);setError("");setDialog(true);}
+  useEffect(()=>{if(!reportTarget||!state||readOnly)return;setEditing(null);setAddress(reportTarget.address);setRetailer(reportTarget.retailer);setKind("seen");setSource("personal");setPrecision("minute");setOther(false);setError("");setDialog(true);onReportOpened?.();},[reportTarget,state,onReportOpened,readOnly]);
+  async function refresh(){if(readOnly){await reload();return;}setBusy(true);setError("");try{const data=await api({action:"refresh"});setState(data);setNotice(data.result?.checked?`${data.result.checked} öffentliche Feeds geprüft; ${data.result.imported} neue Prüfkandidaten.`:"Quellen sind noch im Prüfintervall. Nach einer Blockade: 30 Minuten Abstand.");}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
+  function open(o:Observation|null=null,branch?:Signals["branches"][number]){if(readOnly){window.location.assign("/admin");return;}setEditing(o);setAddress(o?.address||branch?.address||"");setRetailer(o?.retailer||branch?.retailer||"Hugendubel");setKind(o?.kind||"seen");setSource(o?.source||"personal");setPrecision(o?.time_precision||"minute");setOther(false);setError("");setDialog(true);}
   async function save(e:React.FormEvent<HTMLFormElement>){
-    e.preventDefault();const f=new FormData(e.currentTarget);setBusy(true);setError("");
+    e.preventDefault();if(readOnly)return;const f=new FormData(e.currentTarget);setBusy(true);setError("");
     const num=(k:string)=>f.get(k)?Number(String(f.get(k)).replace(",",".")):null;
     const report:ReportInput={retailer,address:String(f.get(other?"customAddress":"address")||"")||null,product:String(f.get("product")),kind,source,time_precision:precision,observed_at:new Date(String(f.get("observed"))+(precision==="day"?"T00:00:00":"")).getTime(),expected_at:kind==="announced"?new Date(String(f.get("expected"))).getTime():null,source_url:String(f.get("sourceUrl")||"")||null,note:String(f.get("note")||""),price:num("price"),uvp_price:num("uvpPrice"),uvp_source:String(f.get("uvpSource")||"")||null};
     try{setState(await api({action:"save",report,...(editing?{id:editing.id}:{})}));setDialog(false);setNotice("Beobachtung gespeichert.");}catch(e){setError((e as Error).message);}finally{setBusy(false);}
   }
-  async function dismiss(id:string){setBusy(true);try{setState(await api({action:"dismiss",id}));}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
+  async function dismiss(id:string){if(readOnly)return;setBusy(true);try{setState(await api({action:"dismiss",id}));}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
   const branches=state?.branches.filter(b=>(shop==="all"||b.retailer===shop))||[];
   const actionable=branches.filter(b=>b.priority>0);
   const known=branches.filter(b=>b.priority<=0&&(b.observations.length>0||b.opening.state!=="unknown"));
