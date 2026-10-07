@@ -75,6 +75,16 @@ test('real background worker records completion, source blocks and skips an earl
   assert.ok(state.monitors.every(m=>m.status==='blocked'));assert.equal(state.drops.length,0);
   assert.deepEqual(await runBackground(),{due:false});assert.equal(requests.length,4);
 }));
+test('the exact next scheduled interval is due despite completion latency',async()=>withDb(async sql=>{
+  const scheduledAt=Date.now()-125000;
+  await runBackground(Date.now(),scheduledAt);
+  const completed=Number(sql.prepare("SELECT value FROM meta WHERE key='schedulerAt'").get().value);
+  assert.ok(completed>scheduledAt);
+  assert.deepEqual(await runBackground(Date.now(),scheduledAt+119999),{due:false});
+  const next=await runBackground(Date.now(),scheduledAt+120000);
+  assert.ok(next.stock);assert.ok(next.community);
+  assert.equal(sql.prepare("SELECT value FROM meta WHERE key='backgroundDueAt'").get().value,String(scheduledAt+120000));
+}));
 test('pause and an existing lease prevent background network work',async()=>withDb(async(sql,sub,requests)=>{
   sql.exec("INSERT INTO meta VALUES ('settings','{\"auto\":false,\"interval\":120}')");
   assert.deepEqual(await runBackground(),{paused:true});assert.equal(requests.length,0);
