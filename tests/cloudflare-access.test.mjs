@@ -17,6 +17,11 @@ test('all public write methods and MCP are protected', async () => {
   }
   assert.equal((await radarAccessResponse(request('/mcp'), env)).status, 401);
 });
+test('only the public device-specific push endpoint accepts anonymous POST', async () => {
+  assert.equal(await radarAccessResponse(request('/api/push', {method:'POST',headers:{origin:'https://radar.test'}}), {}), null);
+  assert.equal((await radarAccessResponse(request('/api/push', {method:'PUT'}), {})).status, 401);
+  assert.equal((await radarAccessResponse(request('/api/push', {method:'POST',headers:{origin:'https://other.test'}}), {})).status, 403);
+});
 test('missing, weak, malformed and incorrect credentials fail closed', async () => {
   for (const bad of ['', 'Basic !!!', `Basic ${btoa('other:synthetic-test-only-password')}`, 'Bearer wrong']) {
     assert.equal(await isRadarOwner(request('/', { headers: { authorization: bad } }), env), false);
