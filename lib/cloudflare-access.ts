@@ -43,6 +43,7 @@ export async function radarAccessResponse(request: Request, env: AccessEnv): Pro
     (request.headers.get("origin") && request.headers.get("origin") !== url.origin))) {
     return Response.json({ error: "Nicht erlaubter Ursprung" }, { status: 403 });
   }
+  if (url.pathname === "/api/push" && request.method === "POST") return null;
   if (!owner) {
     return Response.json({ error: "Bitte zuerst die Verwaltung unter /admin anmelden." }, {
       status: 401,

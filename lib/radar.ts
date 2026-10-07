@@ -25,12 +25,13 @@ export async function seed(){
 }
 export async function snapshot(){
   await seed();
-  const [monitors,drops,deviceCount,settings,schedulerAt,schedule] = await Promise.all([
+  const [monitors,drops,deviceCount,settings,schedulerAt,schedule,backgroundError,backgroundStartedAt] = await Promise.all([
     database().prepare("SELECT * FROM monitors WHERE kind='product' ORDER BY retailer,name").all(),
     database().prepare("SELECT * FROM drops WHERE channel='store' AND location IS NOT NULL AND uvp_price IS NOT NULL AND uvp_source IS NOT NULL ORDER BY created_at DESC LIMIT 100").all(),
     database().prepare("SELECT COUNT(*) AS n FROM devices").first<{n:number}>(),
     meta("settings",'{}'),
     meta("schedulerAt"),meta("schedule"),
+    meta("backgroundError"),meta("backgroundStartedAt"),
   ]);
   const vars=env as unknown as Record<string,string|undefined>;
   const physical=monitors.results.map((m:any)=>m.channel==="store"?{...m,branches:readBranches(m.branch_stock)}:{...m,branches:[],channel:"unknown",location:null,price:null,seller:null,status:["available","unavailable","preorder"].includes(m.status)?"unknown":m.status,detail:["available","unavailable","preorder"].includes(m.status)?"Kein Filialbestand belegt":m.detail});
@@ -41,9 +42,9 @@ export async function snapshot(){
   }
   const ordered=[...directory.values()].sort((a,b)=>a.retailer.localeCompare(b.retailer,"de")||a.name.localeCompare(b.name,"de"));
   const pricedDrops=drops.results.map((d:any)=>({...d,branches:readBranches(d.branch_stock)})).filter((d:any)=>d.branches.length>0 && d.branches.every((b:any)=>b.status==="available" && b.quantity>0 && priceState(b.price,d)==="eligible"));
-  return {monitors:physical,drops:pricedDrops,retailers,stores:ordered,devices:deviceCount?.n??0,settings:storeSettings(settings),schedulerAt:schedulerAt?Number(schedulerAt):null,schedule: schedule?JSON.parse(schedule):null,publicKey:vars.VAPID_PUBLIC_KEY??null,lastScan:Math.max(0,...physical.map((m:any)=>Number(m.checked_at)||0))||null,now:Date.now()};
+  return {monitors:physical,drops:pricedDrops,retailers,stores:ordered,devices:deviceCount?.n??0,settings:storeSettings(settings),schedulerAt:schedulerAt?Number(schedulerAt):null,schedule: schedule?JSON.parse(schedule):null,backgroundError:backgroundError||null,backgroundStartedAt:backgroundStartedAt?Number(backgroundStartedAt):null,publicKey:vars.VAPID_PUBLIC_KEY??null,lastScan:Math.max(0,...physical.map((m:any)=>Number(m.checked_at)||0))||null,now:Date.now()};
 }
-function pushEndpoint(endpoint:string){
+export function pushEndpoint(endpoint:string){
   const u=new URL(endpoint);
   if(u.protocol!=="https:" || (u.port && u.port!=="443") || u.username || u.password || !(u.hostname.endsWith(".push.apple.com") || ["fcm.googleapis.com","updates.push.services.mozilla.com","web.push.apple.com"].includes(u.hostname)))throw new Error("Unbekannter Push-Dienst");
   return u;
@@ -93,7 +94,7 @@ export async function scan(background=false){
   if(!lock.meta.changes)return {busy:true,checked:0,drops:0};
   try{
     const settings=storeSettings(await meta("settings",'{}'));
-    if(background){await setMeta("schedulerAt",String(started));if(!settings.auto)return {paused:true,checked:0,drops:0};}
+    if(background&&!settings.auto)return {paused:true,checked:0,drops:0};
     const rows=await db.prepare("SELECT * FROM monitors WHERE enabled=1 AND kind='product' AND next_check_at<=? ORDER BY checked_at ASC LIMIT 12").bind(started).all<any>();
     let checked=0,dropCount=0;
     for(const row of rows.results){
