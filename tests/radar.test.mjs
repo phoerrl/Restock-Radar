@@ -10,7 +10,8 @@ registerHooks({resolve(specifier,context,next){
   if(specifier==='cloudflare:workers')return {url:'data:text/javascript,export const env=globalThis.__radarTestEnv;',shortCircuit:true};
   return next(specifier,context);
 }});
-const {scan,snapshot,seed,storeSettings,addMonitor,updateReference}=await import('../lib/radar.ts');
+const {scan,snapshot,seed,storeSettings,addMonitor,updateReference,setCatalogVersion}=await import('../lib/radar.ts');
+const {catalogSeeds}=await import('../lib/set-catalog.ts');
 const url='https://www.thalia.de/shop/home/artikeldetails/A123';
 function html(local=false,count=3,price=29.99){
   const offer={availability:`https://schema.org/${count?'InStock':'OutOfStock'}`,price,priceCurrency:'EUR'};
@@ -26,11 +27,12 @@ async function withDb(run){
     return {bind(...values){args=values;return this;},async run(){return {meta:{changes:Number(statement.run(...args).changes)}};},async first(){return statement.get(...args)||null;},async all(){return {results:statement.all(...args)};}};
   },async batch(statements){sql.exec('BEGIN');try{const out=[];for(const s of statements)out.push(await s.run());sql.exec('COMMIT');return out;}catch(error){sql.exec('ROLLBACK');throw error;}}};
   sql.exec("INSERT INTO meta VALUES ('seeded','1'),('physicalScopeV1','1')");
+  sql.prepare("INSERT INTO meta VALUES (?, '1')").run(setCatalogVersion);
   sql.prepare("INSERT INTO monitors (id,name,retailer,url,kind) VALUES ('watched','Pokémon 30 Jahre Boosterbundle','Thalia',?,'product')").run(url);
   sql.exec("UPDATE monitors SET uvp_price=29.99,uvp_source='https://www.pokemon.com/de/test-only-reference' WHERE id='watched'");
   const original=globalThis.fetch;let response=html(),requests=0;
   globalThis.fetch=async()=>{requests++;return new Response(response,{headers:{'content-type':'text/html'}});};
-  try{await run(sql,{respond:value=>{response=value;},due:()=>sql.exec("UPDATE monitors SET next_check_at=0"),requests:()=>requests});}
+  try{await run(sql,{respond:value=>{response=value;},due:()=>sql.exec("UPDATE monitors SET next_check_at=0; DELETE FROM meta WHERE key LIKE 'retailerBackoff:%'"),requests:()=>requests});}
   finally{globalThis.fetch=original;sql.close();}
 }
 
@@ -69,6 +71,25 @@ test('invalid legacy settings fall back to physical-only defaults',()=>{
   assert.deepEqual(storeSettings('not JSON'),{auto:true,interval:120});
   assert.deepEqual(storeSettings('{"auto":true,"interval":-1,"online":true}'),{auto:true,interval:120});
 });
+test('set catalog upgrade preserves existing settings and adds sources just once',async()=>withDb(async sql=>{
+  sql.prepare('DELETE FROM meta WHERE key=?').run(setCatalogVersion);
+  const s=catalogSeeds()[0];
+  sql.prepare("INSERT INTO monitors (id,name,retailer,url,kind,enabled,uvp_price,uvp_source) VALUES ('custom','My title',?,?,'product',0,54.99,'https://www.pokemon.com/de/receipt')").run(s.retailer,s.url);
+  await seed();
+  assert.equal(sql.prepare('SELECT COUNT(*) AS n FROM monitors').get().n,catalogSeeds().length+1);
+  const custom=sql.prepare("SELECT * FROM monitors WHERE id='custom'").get();
+  assert.equal(custom.enabled,0);assert.equal(custom.name,'My title');assert.equal(custom.uvp_price,54.99);
+  const removed=catalogSeeds()[1].id;
+  sql.prepare('DELETE FROM monitors WHERE id=?').run(removed);await seed();
+  assert.equal(sql.prepare('SELECT COUNT(*) AS n FROM monitors WHERE id=?').get(removed).n,0);
+}));
+test('a retailer challenge backs off all sources on that host without inventing zero stock',async()=>withDb(async(sql,io)=>{
+  sql.prepare("INSERT INTO monitors (id,name,retailer,url,kind) VALUES ('second','Pokémon 30 Jahre Mini-Tin','Thalia',?,'product')").run(url+'second');
+  io.respond('<title>Sicherheits-Check</title>');
+  assert.equal((await scan()).checked,1);assert.equal(io.requests(),1);
+  assert.equal(sql.prepare("SELECT COUNT(*) AS n FROM monitors WHERE next_check_at>0").get().n,2);
+  assert.equal((await snapshot()).drops.length,0);
+}));
 test('an interval-limited scan does not advance the real check timestamp',async()=>withDb(async(sql,io)=>{
   await scan();const checkedAt=(await snapshot()).lastScan;
   sql.exec("UPDATE monitors SET next_check_at=9999999999999");

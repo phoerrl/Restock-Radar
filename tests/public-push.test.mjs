@@ -12,11 +12,12 @@ registerHooks({ resolve(specifier, context, next) {
 } });
 const { publicPush } = await import('../lib/public-push.ts');
 const { runBackground } = await import('../lib/background.ts');
-const { snapshot } = await import('../lib/radar.ts');
+const { snapshot,setCatalogVersion } = await import('../lib/radar.ts');
 async function withDb(run) {
   const sql = new DatabaseSync(':memory:');
   const folder = new URL('../drizzle/', import.meta.url);
   for (const file of readdirSync(folder).filter(f => f.endsWith('.sql')).sort()) sql.exec(readFileSync(new URL(file, folder), 'utf8'));
+  sql.prepare("INSERT INTO meta VALUES (?, '1')").run(setCatalogVersion);
   Object.assign(globalThis.__publicEnv, generatePushSecrets('https://synthetic-radar.test'));
   globalThis.__publicEnv.DB = { prepare(query) {
     const statement = sql.prepare(query); let args = [];
