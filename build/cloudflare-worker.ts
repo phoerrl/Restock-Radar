@@ -7,8 +7,8 @@ export default {
     const access = await radarAccessResponse(request, env);
     return access ?? handler.fetch(request, env, ctx);
   },
-  async scheduled() {
-    try { await runBackground(); }
+  async scheduled(controller: ScheduledController) {
+    try { await runBackground(Date.now(), controller.scheduledTime); }
     catch (error) { console.error("Radar background failed", error instanceof Error ? error.message : "Unknown failure"); throw error; }
   },
 };
