@@ -1,5 +1,13 @@
 # Drop Radar Leipzig: Nur Filialen, Bis UVP
 
+## Cloudflare-Testbetrieb
+
+Die eigenstaendige Cloudflare-Version hat einen Cron-Trigger alle zwei Minuten. Der letzte erfolgreiche Lauf, Quellenfehler und Pausen werden getrennt gespeichert; ein konfigurierter Trigger allein gilt nicht als erfolgreiche Pruefung. Bestehende Pruefintervalle und die 30-Minuten-Rueckoff nach Quellensperren bleiben verbindlich. Migration `0004_gorgeous_the_order.sql` ergaenzt die Geraete-Testbegrenzung und kurzfristige Push-Anfragelimits.
+
+Beim Deployment werden fehlende VAPID-Schluessel einmalig als Cloudflare-Secrets erzeugt. Vorhandene Schluessel werden niemals ersetzt; ein unvollstaendiger Satz stoppt die Einrichtung. Private Werte stehen weder im Repository noch in Build-Logs. Oeffentliche Besucher koennen ueber `/api/push` ihr eigenes Geraet verbinden, testen und trennen. Die geheimen Schluessel des Browser-Abonnements autorisieren nur genau dieses Geraet, niemals die Radar-Verwaltung. Endpunkte werden nicht oeffentlich ausgegeben; Testnachrichten sind ausdruecklich keine Restock-Meldungen. Auf dem iPhone muss die App auf dem Home-Bildschirm gestartet und die Push-Erlaubnis vom Nutzer erteilt werden. Eine vom Push-Dienst angenommene Nachricht ist erst nach Empfang auf dem Geraet als zugestellt bestaetigt.
+
+Ein laufender Zeitplan schafft keinen Warenwirtschaftszugang. Gesperrte Haendler- und Reddit-Quellen werden als gesperrt angezeigt. Es gibt weiterhin keinen verifizierten Wareneingangsfeed. Die EANs `196214145245` (Booster Bundle) und `196214146310` (Mini Tin) stammen vom Nutzerbeleg, nicht aus einer angeschlossenen Filialbestandsquelle.
+
 Web-App fuer physische Laeden, mit oeffentlichem Leipzig-Filialverzeichnis, geschuetzter Verwaltung, Artikelquellen, Bestandswechsel-Verlauf und vorbereitetem Web Push. Keine Online-Angebote, Versandverfuegbarkeiten, Marketplace-Alarme oder automatische Uebernahme von Shop-Suchergebnissen.
 
 ## Cloudflare-Hosting Aus GitHub
@@ -44,7 +52,7 @@ Alle zehn gewuenschten Haendler sind gleichberechtigt im Verzeichnis und Filter 
 - Das Filialverzeichnis enthaelt derzeit 78 Standorte aus allen zehn Ketten: 16 zuvor erfasste Adressen plus 62 weitere Leipziger OSM-Adressen. Keine vollstaendige Liste aller Laeden oder aller Smyths-Filialen. Die zwei vorgesehenen Smyths-Standorte Paunsdorf und Guenthersdorf sind enthalten. Weitere belegte Filialadressen aus Artikelquellen werden beim Abruf ergaenzt.
 - Fuer die neuen Ketten sind noch keine Live-Bestandsadapter verifiziert. Filialfinder-Links sind Adressquellen und werden nicht als Warenbestand abgefragt.
 - Es ist noch keine deutsche Hersteller-UVP fuer die konkreten Artikel automatisch verifiziert. Es werden keine geratenen Preise vorbefuellt. Unter Artikel kann eine eigene UVP-Referenz in EUR mit Beleglink fuer exakt denselben Artikel hinterlegt werden. Der Beleglink wird gespeichert, nicht automatisch ausgelesen oder als Herstellerbeleg zertifiziert.
-- Hintergrunddienst ist noch nicht eingerichtet. Die Anzeige prueft bei geoeffneter App; ein erfolgreicher privater HTTPS-Deployment ist getrennt davon zu bestaetigen.
+- Cloudflare-Cron ist fuer Pruefungen bei geschlossener App konfiguriert. Erst ein neuer `schedulerAt`-Zeitstempel beweist einen erfolgreich abgeschlossenen Lauf, nicht automatisch lesbare Quellen.
 - Push-Schluessel und PWA sind vorbereitet. Eine echte iPhone-Zustellung wurde nicht getestet; es ist noch kein Geraet registriert.
 
 Der Name/Link der anderen App oder ein konkreter Artikel mit EAN/Artikel-ID kann helfen, deren Datenquelle zu identifizieren. Fuer einen Alarm beim **tatsaechlichen Wareneingang** braucht es einen zugelassenen Liefer-/Wareneingangsfeed oder eine explizite Meldung des Ladens. Ein nachtraeglich beobachteter Bestandswechsel beweist keine Lieferung und liefert auch keinen Wareneingangszeitpunkt.
@@ -75,7 +83,7 @@ Der Reiter `Heute` verarbeitet Beobachtungen mit Quelle, exakter Filialadresse, 
 
 `/api/signals` speichert und liest diese Daten. `/api/background` prueft beide Quelltypen. `/mcp` bietet zusaetzlich `read_branch_signals` und `record_branch_observation` fuer spaetere autorisierte Rechercheimporte; die normalen Melde- und Alarmregeln bleiben verbindlich. Migrationen `0002_supreme_fallen_one.sql` und `0003_simple_clea.sql` erhalten vorhandene Daten. Es wurden keine Test-Bestaende in den echten Radar geschrieben.
 
-Eine Browserpruefung kann im Original abgeschlossen werden. Dies entsperrt nicht automatisch die getrennte Server-Sitzung. Eine solche Freischaltung oder einen sofortigen iPhone-Alarm behauptet die App nicht. Ein unbeaufsichtigter Zeitplan ist weiterhin nicht eingerichtet.
+Eine Browserpruefung kann im Original abgeschlossen werden. Dies entsperrt nicht automatisch die getrennte Server-Sitzung. Eine solche Freischaltung oder einen sofortigen iPhone-Alarm behauptet die App nicht. Der Cloudflare-Cron prueft die konfigurierten Quellen unbeaufsichtigt und zeigt deren Sperren weiterhin offen an.
 
 Die Serverlogik erzwingt den Filialumfang. Auch alte Einstellungen `online: true` oder `marketplace: true` koennen keine Online-Pushs ausloesen. Alte Shop-Suchquellen und erkannte reine Online-Angebote sind verlustfrei als `kind='archived'` deaktiviert. Alte Online- und unsichere Pickup-Ereignisse bleiben in der Datenbank, erscheinen aber nicht mehr im Verlauf und werden nicht versendet.
 
@@ -97,9 +105,9 @@ D1-Schema: `db/schema.ts`, unveraenderliche Migrationen: `drizzle/`. Lokale Migr
 
 ## Spaetere Hintergrundanbindung
 
-Erst nach echter Datenquellen-Verifizierung und erfolgreicher Veroeffentlichung einen Zeitplan anbinden. Externe Aufrufe von POST `/api/background` brauchen `Authorization: Bearer <RADAR_ADMIN_PASSWORD>` ausschliesslich im Header an diese App. Danach per GET gespeicherte Ergebnisse und `schedulerAt` pruefen. Ein Cloudflare-Cron-Trigger ist in dieser Variante noch nicht eingerichtet. Kein Rebuild bei einer Datenaktualisierung.
+Cloudflare ruft den `scheduled()`-Handler alle zwei Minuten auf. Externe Aufrufe von POST `/api/background` brauchen `Authorization: Bearer <RADAR_ADMIN_PASSWORD>` ausschliesslich im Header an diese App. Danach per GET gespeicherte Ergebnisse und `schedulerAt` pruefen. Fehler erhalten den letzten erfolgreichen Lauf. Kein Rebuild bei einer Datenaktualisierung.
 
-`/mcp` bietet `check_pokemon_drops`. Keine Zugangsdaten in Zeitplan-Prompts speichern. Bestehende passende Zeitplaene wiederverwenden. Ohne relevante Aenderung still bleiben. Der Pause-Schalter gilt auch im Hintergrund. `PUT /api/background` speichert nur Zeitplan-Metadaten; es startet keinen Scheduler.
+`/mcp` bietet `check_pokemon_drops`. Keine Zugangsdaten in Zeitplan-Prompts speichern. Ohne relevante Aenderung still bleiben. Der Pause-Schalter gilt auch im Hintergrund. `PUT /api/background` aendert Pause und Pruefintervall (2, 5 oder 10 Minuten), nicht den festen Cloudflare-Trigger.
 
 Auf dem iPhone muss die spaetere HTTPS-App zum Home-Bildschirm hinzugefuegt und von dort gestartet werden. Push-Berechtigung nur durch direkte Nutzeraktion. Testzustellung auf dem Empfangsgeraet pruefen. https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/
 
@@ -120,4 +128,4 @@ Zusaetzliche Tests pruefen alle zehn Ketten, Cent-Vergleiche, EUR-Pflicht, fehle
 
 Geprueft am 06.10.2026. Adressen belegen weder Pokemon-Sortiment noch Preise oder aktuelle Verfuegbarkeit.
 
-`node node_modules/typescript/bin/tsc --noEmit` prueft TypeScript. `npm run build` baut den eigenstaendigen Cloudflare-Worker. Die zusaetzlichen Zugriffstests pruefen oeffentliche Lesezugriffe, gesperrte Schreibzugriffe, ungueltige und UTF-8-Zugangsdaten, Origin-Pruefung und HTTPS. Stand: 93 Tests erfolgreich.
+`node node_modules/typescript/bin/tsc --noEmit` prueft TypeScript. `npm run build` baut den eigenstaendigen Cloudflare-Worker. Die zusaetzlichen Zugriffstests pruefen oeffentliche Lesezugriffe, gesperrte Verwaltungszugriffe, geraeteeigene Push-Aktionen, Einrichtungsstabilitaet, Hintergrundlauf-Leases, Fehler und Pausen. Stand: 102 Tests erfolgreich.
