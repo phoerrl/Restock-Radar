@@ -16,7 +16,8 @@ export const drops = sqliteTable("drops", {
   uvpPrice: real("uvp_price"), uvpSource: text("uvp_source"), branchStock: text("branch_stock").notNull().default("[]"),
   createdAt: integer("created_at").notNull(), pushState: text("push_state").notNull().default("pending"),
 }, table => [uniqueIndex("drops_monitor_version").on(table.monitorId, table.version)]);
-export const devices = sqliteTable("devices", { endpoint: text("endpoint").primaryKey(), subscription: text("subscription").notNull(), createdAt: integer("created_at").notNull(), lastError: text("last_error") });
+export const devices = sqliteTable("devices", { endpoint: text("endpoint").primaryKey(), subscription: text("subscription").notNull(), createdAt: integer("created_at").notNull(), lastError: text("last_error"), lastTestAt: integer("last_test_at").notNull().default(0) });
+export const pushLimits = sqliteTable("push_limits", { key:text("key").primaryKey(),count:integer("count").notNull(),expiresAt:integer("expires_at").notNull() });
 export const meta = sqliteTable("meta", { key: text("key").primaryKey(), value: text("value").notNull() });
 
 export const observations = sqliteTable("observations", {
