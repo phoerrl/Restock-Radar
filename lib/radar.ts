@@ -4,6 +4,9 @@ import { seeds, stores, retailers } from "./catalog.ts";
 import { blank, fetchRetail, hosts, parsePage, retailUrl, type Result } from "./retail.ts";
 import { priceState, readBranches, uvpTransition, validateReference } from "./pricing.ts";
 import { normalizePlace } from "./place.ts";
+import { catalogSeeds } from "./set-catalog.ts";
+
+export const setCatalogVersion = "setCatalog20261007V1";
 
 export function storeSettings(value:string) {
   try{const s=JSON.parse(value);return {auto:s.auto!==false,interval:[120,300,600].includes(s.interval)?s.interval:120};}
@@ -21,6 +24,10 @@ export async function seed(){
   if(!await meta("physicalScopeV1"))await database().batch([
     database().prepare("UPDATE monitors SET enabled=0,kind='archived' WHERE kind='discovery' OR (channel='online' AND status IN ('available','unavailable','preorder'))"),
     database().prepare("INSERT OR IGNORE INTO meta (key,value) VALUES ('physicalScopeV1','1')"),
+  ]);
+  if(!await meta(setCatalogVersion))await database().batch([
+    ...catalogSeeds().map(s=>database().prepare("INSERT OR IGNORE INTO monitors (id,name,retailer,url,kind) SELECT ?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM monitors WHERE url=?)").bind(s.id,s.name,s.retailer,s.url,s.kind,s.url)),
+    database().prepare("INSERT OR IGNORE INTO meta (key,value) VALUES (?, '1')").bind(setCatalogVersion),
   ]);
 }
 export async function snapshot(){
@@ -97,12 +104,23 @@ export async function scan(background=false){
     if(background&&!settings.auto)return {paused:true,checked:0,drops:0};
     const rows=await db.prepare("SELECT * FROM monitors WHERE enabled=1 AND kind='product' AND next_check_at<=? ORDER BY checked_at ASC LIMIT 12").bind(started).all<any>();
     let checked=0,dropCount=0;
+    const blockedHosts=new Set<string>();
     for(const row of rows.results){
+      const host=new URL(row.url).hostname;
+      const retryAt=Number(await meta(`retailerBackoff:${host}`))||0;
+      if(blockedHosts.has(host)||retryAt>started){
+        await db.prepare("UPDATE monitors SET next_check_at=MAX(next_check_at,?) WHERE id=?").bind(retryAt,row.id).run();
+        continue;
+      }
       let result:Result;
       try{const response=await fetchRetail(row.url);result=response.status===200?parsePage(response.html,response.url,row.kind):{...blank(),status:"blocked",detail:`Händler begrenzt die Abfrage (HTTP ${response.status})`};}
       catch(err){result={...blank(),status:"error",detail:err instanceof Error?err.message:"Abfrage fehlgeschlagen"};}
       const now=Date.now(),blocked=["blocked","error"].includes(result.status);
       const next=now+(blocked?30*60*1000:Math.max(120,settings.interval)*1000);
+      if(result.status==="blocked"){
+        blockedHosts.add(host);
+        await setMeta(`retailerBackoff:${host}`,String(next));
+      }
       const transition=uvpTransition(result,row.last_stock,row);
       const notify=row.kind==="product" && transition.changes.length>0;
       // Version check makes each availability transition produce at most one event.

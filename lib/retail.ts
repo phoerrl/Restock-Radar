@@ -10,6 +10,7 @@ export const hosts: Record<string,string> = {
   "saturn.de":"Saturn", "www.saturn.de":"Saturn", "mueller.de":"Müller", "www.mueller.de":"Müller",
   "galeria.de":"GALERIA", "www.galeria.de":"GALERIA", "rossmann.de":"Rossmann", "www.rossmann.de":"Rossmann",
   "edeka.de":"EDEKA", "www.edeka.de":"EDEKA", "rewe.de":"REWE", "www.rewe.de":"REWE", "lidl.de":"Lidl", "www.lidl.de":"Lidl",
+  "vedes.com":"VEDES", "www.vedes.com":"VEDES",
 };
 export function retailUrl(value: string) {
   const url = new URL(value);
