@@ -1,7 +1,7 @@
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
 self.addEventListener('push', event => {
-  let data = {title:'Drop Radar',body:'Ein neuer Drop wurde erkannt.',url:'/',tag:'drop'};
+  let data = {title:'Drop Radar',body:'Neue Radar-Nachricht. Bestand und Quelle bitte in der App prüfen.',url:'/',tag:'drop'};
   try { data = {...data,...event.data.json()}; } catch {}
   event.waitUntil(self.registration.showNotification(data.title,{body:data.body,icon:'/icon-192.png',badge:'/icon-192.png',tag:data.tag,data:{url:'/'}}));
 });
