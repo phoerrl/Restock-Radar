@@ -70,11 +70,11 @@ test('public snapshots never expose subscriptions, private keys or device secret
   for(const secret of [sub.endpoint,sub.keys.auth,globalThis.__publicEnv.VAPID_PRIVATE_KEY])assert.ok(!json.includes(secret));
 }));
 test('real background worker records completion, source blocks and skips an early repeat',async()=>withDb(async(sql,sub,requests)=>{
-  const first=await runBackground();assert.equal(first.stock.checked,1);assert.equal(first.community.checked,3);
+  const first=await runBackground();assert.equal(first.stock.checked,1);assert.equal(first.community.checked,4);
   const state=await snapshot();assert.ok(state.schedulerAt);assert.equal(state.backgroundError,null);
-  assert.deepEqual(state.schedule,{enabled:true,interval:2});assert.equal(requests.length,4);
+  assert.deepEqual(state.schedule,{enabled:true,interval:2});assert.equal(requests.length,5);
   assert.ok(state.monitors.every(m=>m.status==='blocked'));assert.equal(state.drops.length,0);
-  assert.deepEqual(await runBackground(),{due:false});assert.equal(requests.length,4);
+  assert.deepEqual(await runBackground(),{due:false});assert.equal(requests.length,5);
 }));
 test('the exact next scheduled interval is due despite completion latency',async()=>withDb(async sql=>{
   const scheduledAt=Date.now()-125000;

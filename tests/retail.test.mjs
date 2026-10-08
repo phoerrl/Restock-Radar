@@ -22,8 +22,14 @@ test('online sold-out or pre-order states say nothing about shelf stock',()=>{
 test('a branch quantity and complete address qualify, but do not assert a goods receipt',()=>{
   const p=observed();assert.equal(p.status,'available');assert.equal(p.channel,'store');assert.equal(canNotify(p),true);assert.match(p.location,/04107 Leipzig/);assert.match(p.detail,/Wareneingang nicht belegt/);assert.equal(p.branches[0].quantity,4);
 });
-test('collection option or branch name without a branch quantity is insufficient',()=>{
-  for(const extra of [{availableAtOrFrom:branch},{availableDeliveryMethod:'https://schema.org/OnSitePickup'},{availableAtOrFrom:{name:'Thalia Leipzig'},inventoryLevel:{value:4}}])assert.equal(canNotify(parsePage(page(offer('InStock',extra)),url,'product')),false);
+test('explicit physical branch availability works without inventing a quantity',()=>{
+  const result=parsePage(page(offer('InStock',{availableAtOrFrom:branch})),url,'product');
+  assert.equal(canNotify(result),true);assert.equal(result.branches[0].quantity,null);assert.match(result.detail,/Stückzahl offen/);
+  const zero=parsePage(page(offer('OutOfStock',{availableAtOrFrom:branch})),url,'product');
+  assert.equal(zero.status,'unavailable');assert.equal(zero.branches[0].quantity,null);assert.equal(canNotify(zero),false);
+});
+test('collection alone or an incomplete shop address remains insufficient',()=>{
+  for(const extra of [{availableDeliveryMethod:'https://schema.org/OnSitePickup'},{availableAtOrFrom:{name:'Thalia Leipzig'},inventoryLevel:{value:4}}])assert.equal(canNotify(parsePage(page(offer('InStock',extra)),url,'product')),false);
 });
 test('delivery to store tomorrow is not current branch stock',()=>{
   assert.equal(canNotify(observed('InStock',{deliveryLeadTime:{minValue:1}})),false);

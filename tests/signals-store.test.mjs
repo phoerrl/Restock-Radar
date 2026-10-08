@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync,readdirSync} from 'node:fs';
+import {publicFeeds} from '../lib/community.ts';
 import {registerHooks} from 'node:module';
 import {DatabaseSync} from 'node:sqlite';
 globalThis.__signalsEnv={};
 registerHooks({resolve(specifier,context,next){if(specifier==='cloudflare:workers')return {url:'data:text/javascript,export const env=globalThis.__signalsEnv;',shortCircuit:true};return next(specifier,context);}});
-const {signalsSnapshot,refreshCommunity,saveReport,validateReport,notifySignals}=await import('../lib/signals-store.ts');
+const {signalsSnapshot,refreshCommunity,refreshDiscord,saveReport,validateReport,notifySignals}=await import('../lib/signals-store.ts');
 const report=(extra={})=>({retailer:'Hugendubel',address:'Petersstraße 12–14, 04109 Leipzig',product:'Pokémon 30 Jahre Boosterbundle',kind:'seen',source:'personal',time_precision:'minute',observed_at:Date.now()-60000,expected_at:null,source_url:null,note:'test-only synthetic',price:null,uvp_price:null,uvp_source:null,...extra});
 async function withDb(run){
   const sql=new DatabaseSync(':memory:'),folder=new URL('../drizzle/',import.meta.url);
@@ -26,8 +27,8 @@ test('real user history is seeded once without inventing live stock',async()=>wi
   const state=await signalsSnapshot();await signalsSnapshot();assert.equal(sql.prepare('SELECT COUNT(*) AS n FROM observations').get().n,2);assert.ok(state.branches.every(b=>b.priced.length===0));assert.equal(state.unassigned.length,1);
 }));
 test('blocked feeds are recorded and backed off, never displayed as connected',async()=>withDb(async(sql,requests)=>{
-  const first=await refreshCommunity();assert.equal(first.checked,3);assert.equal(first.imported,0);assert.equal(requests(),3);
-  const state=await signalsSnapshot();assert.ok(state.sources.every(s=>s.status==='blocked'&&s.next_check_at>Date.now()));assert.equal((await refreshCommunity()).checked,0);assert.equal(requests(),3);
+  const first=await refreshCommunity();assert.equal(first.checked,publicFeeds.length);assert.equal(first.imported,0);assert.equal(requests(),publicFeeds.length);
+  const state=await signalsSnapshot();assert.ok(state.sources.every(s=>s.status==='blocked'&&s.next_check_at>Date.now()));assert.equal((await refreshCommunity()).checked,0);assert.equal(requests(),publicFeeds.length);
 }));
 test('paused background does not fetch, personal historical reports survive',async()=>withDb(async(sql,requests)=>{
   sql.exec("INSERT INTO meta VALUES ('settings','{\"auto\":false,\"interval\":120}')");assert.equal((await refreshCommunity(true)).paused,true);assert.equal(requests(),0);assert.equal((await signalsSnapshot()).observations.length,2);
@@ -85,10 +86,29 @@ test('empty, closed-store, and unknown-price reports never dispatch to a synthet
 }));
 test('readable synthetic feed is durably imported once, but never promoted to verified stock',async()=>withDb(async sql=>{
   const xml=`<feed><entry><title>Test-only Hugendubel Leipzig Petersstraße Pokémon 30 Jahre</title><published>${new Date(Date.now()-60000).toISOString()}</published><link href="https://www.reddit.com/r/PokemonTCG_DE/comments/testonly/"/><content>Im Laden wird gerade Ware einsortiert. Synthetic test only.</content></entry></feed>`;
-  globalThis.fetch=async()=>new Response(xml,{headers:{'content-type':'application/atom+xml'}});
+  globalThis.fetch=async url=>new Response(String(url).includes('vercel.app')?'<main><h1>Latest reports</h1><h2>Community deals</h2></main>':xml,{headers:{'content-type':'application/atom+xml'}});
   const first=await refreshCommunity();assert.equal(first.imported,1);
   let state=await signalsSnapshot();assert.equal(state.posts.length,1);assert.equal(state.candidates.length,1);assert.ok(state.branches.every(b=>b.priority<=0));
-  assert.ok(state.sources.every(s=>s.status==='readable'&&s.detail.includes('1 Feed-Einträge')));
+  assert.ok(state.sources.every(s=>s.status==='readable'));assert.ok(state.sources.filter(s=>s.url.includes('reddit')).every(s=>s.detail.includes('1 Feed-Einträge')));
   sql.exec('UPDATE community_sources SET next_check_at=0');assert.equal((await refreshCommunity()).imported,0);
   state=await signalsSnapshot();assert.equal(state.posts.length,1);assert.equal(state.candidates.length,1);
+}));
+test('authorized Discord imports persist once with backoff and never disclose bot credentials or full chat',async()=>withDb(async sql=>{
+  const env=globalThis.__signalsEnv;
+  env.DISCORD_IMPORT_ENABLED='true';env.DISCORD_BOT_TOKEN='test-only-private-bot-secret';
+  env.DISCORD_CHANNELS=JSON.stringify([{guildId:'111111111111111111',channelId:'222222222222222222',label:'Test-only authorized'}]);
+  let requests=0;globalThis.fetch=async()=>{requests++;return Response.json([{id:'333333333333333333',channel_id:'222222222222222222',type:0,timestamp:new Date(Date.now()-60000).toISOString(),content:'Hugendubel Leipzig Petersstrasse: Pokemon 30 Jahre Boosterbundle im Laden. PRIVATE-TEST-ONLY-SENTENCE',author:{username:'PRIVATE-TEST-ONLY-USER'}}]);};
+  try{
+    await signalsSnapshot();const first=await refreshDiscord();assert.deepEqual(first,{checked:1,imported:1});
+    assert.deepEqual(await refreshDiscord(),{checked:0,imported:0});assert.equal(requests,1);
+    const state=await signalsSnapshot();assert.equal(state.discord.readable,1);assert.equal(state.candidates.length,1);assert.equal(state.candidates[0].reviewed,0);
+    for(const secret of [env.DISCORD_BOT_TOKEN,'PRIVATE-TEST-ONLY-SENTENCE','PRIVATE-TEST-ONLY-USER'])assert.ok(!JSON.stringify(state).includes(secret));
+    sql.exec("UPDATE meta SET value='0' WHERE key LIKE 'discordLease:%'");assert.equal((await refreshDiscord()).imported,0);
+    assert.equal(sql.prepare("SELECT COUNT(*) AS n FROM observations WHERE id LIKE 'discord:%'").get().n,1);
+    sql.prepare("UPDATE meta SET value=? WHERE key='discordState:222222222222222222'").run(JSON.stringify({status:'readable',checked_at:Date.now()-660000}));
+    const stale=await signalsSnapshot();assert.equal(stale.discord.readable,0);assert.ok(stale.discord.detail.includes('10 Minuten'));
+  }finally{delete env.DISCORD_IMPORT_ENABLED;delete env.DISCORD_BOT_TOKEN;delete env.DISCORD_CHANNELS;}
+}));
+test('missing Discord credentials never count as a connected source',async()=>withDb(async()=>{
+  assert.deepEqual(await refreshDiscord(),{checked:0,imported:0});const state=await signalsSnapshot();assert.equal(state.discord.configured,false);assert.equal(state.discord.readable,0);
 }));
