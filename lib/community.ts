@@ -2,6 +2,7 @@ import { load } from "cheerio";
 import { stores } from "./catalog.ts";
 import { normalizePlace } from "./place.ts";
 import type { Observation } from "./intelligence.ts";
+import { isSet } from "./product-set.ts";
 export type CommunityPost={id:string;title:string;excerpt:string;url:string;published_at:number;fetched_at:number;retailers:string[]};
 const targetSet=(text:string)=>/30(?:jahre|th|anniversary)/.test(text);
 
@@ -9,7 +10,27 @@ export const publicFeeds=[
   {id:"reddit-pokemon-posts",name:"Reddit · PokémonTCG_DE · Beiträge",url:"https://www.reddit.com/r/PokemonTCG_DE/new/.rss?limit=50"},
   {id:"reddit-pokemon-comments",name:"Reddit · PokémonTCG_DE · Kommentare",url:"https://www.reddit.com/r/PokemonTCG_DE/comments/.rss?limit=50"},
   {id:"reddit-leipzig",name:"Reddit · Leipzig",url:"https://www.reddit.com/r/Leipzig/new/.rss?limit=50"},
+  {id:"pokekarte-local",name:"Pokékarte · öffentliche lokale Deal-Hinweise",url:"https://pokekarte-de.vercel.app/en/feed"},
 ];
+export function parseLocalDeals(html:string,now:number):CommunityPost[] {
+  const $=load(html),posts:CommunityPost[]=[];
+  if(!$("main h1").text().includes("Latest reports")||!$("main h2").text().includes("Community deals"))throw new Error("Struktur der öffentlichen Deal-Quelle geändert.");
+  $("main .deal").slice(0,100).each((_,el)=>{
+    const item=$(el),link=item.find("a[href]").first(),title=link.text().trim();
+    if(!item.find(".pill").toArray().some(p=>$(p).text().trim()==="local")||!isSet(title))return;
+    let url:URL;try{url=new URL(sourceUrl(link.attr("href")||""));}catch{return;}
+    if(url.hostname!=="www.mydealz.de"||!url.pathname.startsWith("/deals/"))return;
+    const text=item.text(),age=item.find("span").map((_,span)=>$(span).text()).get().join(" ").match(/\b(\d+)\s+(min|h|days?)\s+ago\b/);
+    if(!age)return;
+    const elapsed=Number(age[1])*(age[2]==="min"?60000:age[2]==="h"?3600000:86400000);
+    if(elapsed>7*86400000)return;
+    const names=[...new Set(stores.map(s=>s.retailer)),"Kaufland","Globus","Marktkauf","Netto","ALDI","ROFU","expert","budni","HIT"];
+    const normal=normalizePlace(text),mentioned=names.filter(r=>normal.includes(normalizePlace(r)));
+    if(!mentioned.length)return;
+    posts.push({id:url.href,url:url.href,title:title.slice(0,180),excerpt:"Lokaler Deal-Hinweis aus Pokékarte/Mydealz. Ort, Artikel, Preis und aktuelle Filialverfügbarkeit am Original prüfen. Zeitpunkt nur aus einer gerundeten Altersangabe abgeleitet; kein Restock-Beleg.",published_at:now-elapsed,fetched_at:now,retailers:mentioned});
+  });
+  return posts;
+}
 export function sourceUrl(value:string) {
   const u=new URL(value);
   if(u.protocol!=="https:"||u.username||u.password||u.port)throw new Error("Beleg muss eine normale HTTPS-Adresse sein.");
@@ -57,7 +78,8 @@ export function parseCommunityPosts(xml:string,now:number):CommunityPost[] {
 }
 export async function fetchCommunityFeed(url:string,now=Date.now()) {
   if(!publicFeeds.some(f=>f.url===url))throw new Error("Unbekannte Feed-Adresse.");
-  const response=await fetch(url,{headers:{Accept:"application/atom+xml, application/rss+xml", "User-Agent":"DropRadarLeipzig/1.0 public-feed-reader"},redirect:"manual",signal:AbortSignal.timeout(10000)});
+  const localDeals=url==="https://pokekarte-de.vercel.app/en/feed";
+  const response=await fetch(url,{headers:{Accept:localDeals?"text/html":"application/atom+xml, application/rss+xml", "User-Agent":"DropRadarLeipzig/1.0 public-feed-reader"},redirect:"manual",signal:AbortSignal.timeout(10000)});
   if(response.status>=300&&response.status<400)throw new Error("Feed leitet weiter; keine automatische Weitergabe an andere Quellen.");
   if(!response.ok)throw new Error(`Öffentlicher Feed nicht lesbar (HTTP ${response.status}).`);
   if(Number(response.headers.get("content-length"))>750000)throw new Error("Feed zu groß.");
@@ -65,6 +87,7 @@ export async function fetchCommunityFeed(url:string,now=Date.now()) {
   const decoder=new TextDecoder();let size=0,xml="";
   try{for(;;){const chunk=await reader.read();if(chunk.done)break;size+=chunk.value.length;if(size>750000)throw new Error("Feed zu groß.");xml+=decoder.decode(chunk.value,{stream:true});}xml+=decoder.decode();}
   finally{await reader.cancel().catch(()=>{});}
+  if(localDeals){const posts=parseLocalDeals(xml,now);return {candidates:[],posts,entries:load(xml)("main .deal").length,newest:null};}
   const candidates=parseCommunityFeed(xml,now);
   const parsed=load(xml,{xml:true}),dates=parsed("entry").toArray().map(e=>Date.parse(parsed(e).find("published").text()||parsed(e).find("updated").text())).filter(Number.isFinite);
   return {candidates,posts:parseCommunityPosts(xml,now),entries:parsed("entry").length,newest:dates.length?Math.max(...dates):null};

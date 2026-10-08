@@ -5,17 +5,30 @@ import { knownHours, initialObservations, researchNotes } from "./research.ts";
 import { publicFeeds, fetchCommunityFeed, sourceUrl, type CommunityPost } from "./community.ts";
 import { validateReference } from "./pricing.ts";
 import { isSet } from "./product-set.ts";
+import { env } from "cloudflare:workers";
+import { discordChannels, fetchDiscordMessages, DiscordReadError } from "./discord.ts";
 
 export type ReportInput=Omit<Observation,"id"|"created_at"|"reviewed"|"push_state">;
 const columns="id,retailer,address,product,kind,source,observed_at,created_at,expected_at,time_precision,source_url,note,price,uvp_price,uvp_source,reviewed,push_state";
 function insert(o:Observation){return database().prepare(`INSERT OR IGNORE INTO observations (${columns}) VALUES (${columns.split(",").map(()=>"?").join(",")})`).bind(...columns.split(",").map(key=>o[key as keyof Observation]));}
 export async function seedSignals(){
-  if(await meta("signalsSeededV1"))return;
-  await database().batch([
+  if(!await meta("signalsSeededV1"))await database().batch([
     ...initialObservations.map(o=>insert({...o,created_at:Date.now()})),
     ...publicFeeds.map(f=>database().prepare("INSERT OR IGNORE INTO community_sources (id,name,url) VALUES (?,?,?)").bind(f.id,f.name,f.url)),
     database().prepare("INSERT OR IGNORE INTO meta (key,value) VALUES ('signalsSeededV1','1')"),
   ]);
+  if(!await meta("publicSources20261008"))await database().batch([
+    ...publicFeeds.map(f=>database().prepare("INSERT OR IGNORE INTO community_sources (id,name,url) VALUES (?,?,?)").bind(f.id,f.name,f.url)),
+    database().prepare("INSERT OR IGNORE INTO meta (key,value) VALUES ('publicSources20261008','1')"),
+  ]);
+}
+export async function discordSnapshot(){
+  const vars=env as unknown as Record<string,string|undefined>,channels=discordChannels(vars);
+  const states=await Promise.all(channels.map(async c=>{
+    try{return JSON.parse(await meta(`discordState:${c.channelId}`,"{}")) as {status?:string;checked_at?:number;detail?:string};}catch{return {};}
+  }));
+  const now=Date.now(),readable=states.filter(s=>s.status==="readable"&&typeof s.checked_at==="number"&&s.checked_at<=now&&now-s.checked_at<600000).length;
+  return {configured:channels.length>0,total:channels.length,readable,checked_at:Math.max(0,...states.map(s=>s.checked_at||0))||null,detail:!channels.length?"Noch kein freigegebener Bot-/Kanalzugang eingerichtet.":readable<channels.length?"Mindestens ein Kanal noch ungeprüft, nicht lesbar oder seit über 10 Minuten ohne erfolgreichen Abruf.":"Freigegebene Kanäle frisch gelesen; Filialhinweise bleiben Prüfkandidaten."};
 }
 export async function signalsSnapshot(){
   await seedSignals();const now=Date.now();
@@ -27,7 +40,7 @@ export async function signalsSnapshot(){
   }
   const branches=[...directory.values()].map(store=>({...store,...assessBranch(store.retailer,store.address,observations,knownHours.find(h=>branchKey(h.retailer,h.address)===branchKey(store.retailer,store.address)),now)})).sort((a,b)=>b.priority-a.priority||b.observations.length-a.observations.length||a.retailer.localeCompare(b.retailer,"de"));
   const posts=(await database().prepare("SELECT * FROM community_posts WHERE published_at>? ORDER BY published_at DESC LIMIT 30").bind(now-7*86400000).all<Omit<CommunityPost,"retailers"> & {retailers:string}>()).results.map(p=>({...p,retailers:JSON.parse(p.retailers) as string[]}));
-  return {now,branches,observations:observations.slice(0,200),unassigned:observations.filter(o=>!o.address&&o.reviewed===1),candidates:observations.filter(o=>!o.reviewed).slice(0,100),posts,sources:(await database().prepare("SELECT * FROM community_sources ORDER BY name").all()).results,hours:knownHours,research:researchNotes,retailers};
+  return {now,branches,observations:observations.slice(0,200),unassigned:observations.filter(o=>!o.address&&o.reviewed===1),candidates:observations.filter(o=>!o.reviewed).slice(0,100),posts,sources:(await database().prepare("SELECT * FROM community_sources ORDER BY name").all()).results,discord:await discordSnapshot(),hours:knownHours,research:researchNotes,retailers};
 }
 export function validateReport(input:ReportInput,now=Date.now()):ReportInput {
   if(!retailers.some(r=>r.name===input.retailer))throw new Error("Händler ist nicht im Radar.");
@@ -68,7 +81,7 @@ export async function notifySignals(){
 export async function refreshCommunity(background=false){
   await seedSignals();
   if(background&&!storeSettings(await meta("settings","{}")).auto)return {paused:true,checked:0,imported:0};
-  const now=Date.now(),db=database(),due=await db.prepare("SELECT * FROM community_sources WHERE next_check_at<=? ORDER BY checked_at LIMIT 3").bind(now).all<{id:string;url:string}>();
+  const now=Date.now(),db=database(),due=await db.prepare("SELECT * FROM community_sources WHERE next_check_at<=? ORDER BY checked_at LIMIT 4").bind(now).all<{id:string;url:string}>();
   let checked=0,imported=0;
   for(const f of due.results){
     const lock=await db.prepare("UPDATE community_sources SET next_check_at=? WHERE id=? AND next_check_at<=?").bind(now+180000,f.id,now).run();if(!lock.meta.changes)continue;
@@ -83,5 +96,30 @@ export async function refreshCommunity(background=false){
     checked++;
   }
   if(background)await setMeta("communitySchedulerAt",String(Date.now()));
-  await notifySignals();return {checked,imported};
+  const discord=await refreshDiscord();
+  await notifySignals();return {checked:checked+discord.checked,imported:imported+discord.imported};
+}
+export async function refreshDiscord(){
+  const vars=env as unknown as Record<string,string|undefined>,channels=discordChannels(vars),db=database();
+  let checked=0,imported=0;
+  for(const channel of channels){
+    const now=Date.now(),lease=`discordLease:${channel.channelId}`,stateKey=`discordState:${channel.channelId}`;
+    await db.prepare("INSERT OR IGNORE INTO meta (key,value) VALUES (?, '0')").bind(lease).run();
+    const lock=await db.prepare("UPDATE meta SET value=? WHERE key=? AND CAST(value AS INTEGER)<=?").bind(String(now+180000),lease,now).run();
+    if(!lock.meta.changes)continue;
+    let next=now+120000;
+    try{
+      const result=await fetchDiscordMessages(channel,vars.DISCORD_BOT_TOKEN!,now);
+      const writes=result.candidates.length?await db.batch(result.candidates.map(o=>insert({...o,created_at:now}))):[];
+      imported+=writes.reduce((n,r)=>n+r.meta.changes,0);
+      await setMeta(stateKey,JSON.stringify({status:result.readable?"readable":"limited",checked_at:Date.now(),detail:result.readable?`${result.entries} Nachrichten gelesen; ${result.candidates.length} passende Prüfkandidaten.${result.saturated?" Nur die jüngsten 100 Nachrichten erfasst.":""}`:"Keine lesbaren Textinhalte; MESSAGE_CONTENT und Kanalrechte prüfen."}));
+    }catch(error){
+      next=Date.now()+(error instanceof DiscordReadError?error.retrySeconds:1800)*1000;
+      await setMeta(stateKey,JSON.stringify({status:"blocked",checked_at:Date.now(),detail:error instanceof DiscordReadError?error.message:"Discord-Abruf fehlgeschlagen."}));
+    }finally{
+      await db.prepare("UPDATE meta SET value=? WHERE key=? AND value=?").bind(String(next),lease,String(now+180000)).run();
+    }
+    checked++;
+  }
+  return {checked,imported};
 }

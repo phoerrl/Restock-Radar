@@ -2,6 +2,7 @@ import { berlinTime, branchKey, freshMinutes, openingState, type assessBranch, t
 import { normalizePlace, matchesStore } from "./place.ts";
 import { priceState } from "./pricing.ts";
 import { isSet } from "./product-set.ts";
+import { hasBranchStock } from "./branch-stock.ts";
 import type { Monitor, Store } from "./types";
 
 export type BranchEvidence=ReturnType<typeof assessBranch>;
@@ -25,7 +26,7 @@ export function mapBranch(store:Store,evidence:BranchEvidence|undefined,monitors
   const opening=openingState(hours,now);
   const recent=(evidence?.recent||[]).filter(o=>o.observed_at<=now && now-o.observed_at<=freshMinutes*60000 && o.reviewed===1 && o.source!=="secondhand" && o.time_precision==="minute");
   const priced=recent.filter(o=>priceState(o.price,o)==="eligible");
-  const offers=monitors.filter(m=>m.enabled && m.channel==="store" && m.status==="available" && m.retailer===store.retailer && isSet(m.name) && m.checked_at!==null && m.checked_at<=now && now-m.checked_at<Math.max(600000,interval*2000)).flatMap(m=>m.branches.filter(b=>b.status==="available" && b.quantity>0 && matchesStore(b.label,store.address)).map(branch=>({monitor:m,branch}))).filter(({monitor:m})=>!(evidence?.observations||[]).some(o=>o.reviewed===1 && o.kind==="empty" && o.time_precision==="minute" && o.observed_at<=now && o.observed_at>=m.checked_at! && normalizePlace(o.product)===normalizePlace(m.name)));
+  const offers=monitors.filter(m=>m.enabled && m.channel==="store" && m.status==="available" && m.retailer===store.retailer && isSet(m.name) && m.checked_at!==null && m.checked_at<=now && now-m.checked_at<Math.max(600000,interval*2000)).flatMap(m=>m.branches.filter(b=>hasBranchStock(b) && matchesStore(b.label,store.address)).map(branch=>({monitor:m,branch}))).filter(({monitor:m})=>!(evidence?.observations||[]).some(o=>o.reviewed===1 && o.kind==="empty" && o.time_precision==="minute" && o.observed_at<=now && o.observed_at>=m.checked_at! && normalizePlace(o.product)===normalizePlace(m.name)));
   const candidate=evidence?.announced;
   const announced=candidate && candidate.expected_at!==null && candidate.observed_at<=now && now-candidate.observed_at<=86400000 && candidate.expected_at>=now-30*60000 && berlinTime(candidate.expected_at).date===berlinTime(now).date?candidate:null;
   const uvp=priced.length>0 || offers.some(o=>priceState(o.branch.price,o.monitor)==="eligible");

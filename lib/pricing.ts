@@ -1,4 +1,5 @@
 import type { BranchStock, Result } from "./retail.ts";
+import { hasBranchStock } from "./branch-stock.ts";
 
 export type UvpReference = { uvp_price:number|null; uvp_source:string|null };
 export type PriceState = "eligible"|"above"|"missing-price"|"missing-reference";
@@ -40,7 +41,7 @@ export function uvpTransition(result:Result,previous:string|null,reference:UvpRe
   const observed=result.channel==="store"?result.branches:[];
   const changes:(BranchStock & {kind:"first"|"restock"|"price"})[]=[];
   for(const branch of observed) {
-    const qualifies=branch.status==="available" && branch.quantity>0 && priceState(branch.price,reference)==="eligible";
+    const qualifies=hasBranchStock(branch) && priceState(branch.price,reference)==="eligible";
     if(qualifies && eligible[branch.key]!==true)changes.push({...branch,kind:stocks[branch.key]==="available"?"price":stocks[branch.key]?"restock":"first"});
     stocks[branch.key]=branch.status;eligible[branch.key]=qualifies;
   }

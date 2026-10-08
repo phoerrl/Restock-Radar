@@ -2,6 +2,7 @@ import { load } from "cheerio";
 import { normalizePlace } from "./place.ts";
 import { euroPrice } from "./pricing.ts";
 import { isSet } from "./product-set.ts";
+import { hasBranchStock } from "./branch-stock.ts";
 export { isSet } from "./product-set.ts";
 
 export const hosts: Record<string,string> = {
@@ -19,7 +20,7 @@ export function retailUrl(value: string) {
   return url;
 }
 type Json = Record<string, any>;
-export type BranchStock = { key:string; label:string; name:string; address:string; status:"available"|"unavailable"|"preorder"; quantity:number; price:number|null };
+export type BranchStock = { key:string; label:string; name:string; address:string; status:"available"|"unavailable"|"preorder"; quantity:number|null; price:number|null };
 export type Result = { status:string; detail:string; price:number|null; image:string|null; seller:string|null; channel:string; location:string|null; branches:BranchStock[]; products:{name:string;url:string}[] };
 export const blank = (): Result => ({status:"unknown",detail:"Keine belegten Bestandsdaten für eine Filiale",price:null,image:null,seller:null,channel:"unknown",location:null,branches:[],products:[]});
 function records(value:any, out:Json[] = []):Json[] {
@@ -75,14 +76,15 @@ export function parsePage(html:string, url:string, kind:string):Result {
     const seller=typeof offer.seller==="string"?offer.seller:offer.seller?.name;
     if(seller && !normalizePlace(seller).includes(normalizePlace(retailer)))continue;
     if(["MediaMarkt","Saturn"].includes(retailer) && !seller)continue;
-    // A collection option alone may ship from a warehouse. Require a quantity tied to this branch offer.
+    // The offer must identify a physical shop; pickup alone remains insufficient.
     const raw=offer.inventoryLevel?.value;
-    if(!["number","string"].includes(typeof raw) || String(raw).trim()==="" || !Number.isInteger(Number(raw)) || Number(raw)<0)continue;
+    const hasQuantity=Object.hasOwn(offer,"inventoryLevel");
+    if(hasQuantity && (!["number","string"].includes(typeof raw) || String(raw).trim()==="" || !Number.isInteger(Number(raw)) || Number(raw)<0))continue;
     if([offer.description,offer.deliveryLeadTime?.minValue,offer.deliveryLeadTime?.value].some(v=>typeof v==="string" && /versand|lieferung.*filiale|ship.*store|bestellbar|ab\s+morgen/i.test(v)))continue;
     if(Number(offer.deliveryLeadTime?.minValue||offer.deliveryLeadTime?.value||0)>0)continue;
-    const quantity=Number(raw), label=`${place.name}, ${address.streetAddress}, ${address.postalCode} ${address.addressLocality}`;
+    const quantity=hasQuantity?Number(raw):null, label=`${place.name}, ${address.streetAddress}, ${address.postalCode} ${address.addressLocality}`;
     const key=normalizePlace(`${address.streetAddress} ${address.postalCode} ${address.addressLocality}`);
-    const status=/\/(PreOrder|BackOrder)$/.test(offer.availability)?"preorder":quantity>0 && /\/(InStock|LimitedAvailability)$/.test(offer.availability)?"available":quantity===0 && /\/(OutOfStock|SoldOut|Discontinued)$/.test(offer.availability)?"unavailable":null;
+    const status=/\/(PreOrder|BackOrder)$/.test(offer.availability)?"preorder":(quantity===null||quantity>0) && /\/(InStock|LimitedAvailability)$/.test(offer.availability)?"available":(quantity===null||quantity===0) && /\/(OutOfStock|SoldOut|Discontinued)$/.test(offer.availability)?"unavailable":null;
     if(!status){conflicts.add(key);continue;}
     const price=offer.priceCurrency==="EUR"?euroPrice(offer.price):null;
     const prior=branches.get(key);
@@ -90,12 +92,12 @@ export function parsePage(html:string, url:string, kind:string):Result {
     branches.set(key,{key,label,name:place.name,address:`${address.streetAddress}, ${address.postalCode} ${address.addressLocality}`,status,quantity,price});
   }
   result.branches=[...branches.values()].filter(b=>!conflicts.has(b.key)).sort((a,b)=>a.key.localeCompare(b.key));
-  if(!result.branches.length)return {...result,detail:conflicts.size?"Widersprüchliche Filialdaten; kein Drop bestätigt":"Keine belegte Stückzahl vor Ort; Bestell- und Abholoptionen werden nicht gewertet"};
+  if(!result.branches.length)return {...result,detail:conflicts.size?"Widersprüchliche Filialdaten; kein Drop bestätigt":"Keine filialgenaue Verfügbarkeit belegt; Bestell- und Abholoptionen werden nicht gewertet"};
   result.channel="store";
   const available=result.branches.filter(b=>b.status==="available");
   result.location=available.map(b=>b.label).join("; ")||null;
   result.status=available.length?"available":result.branches.some(b=>b.status==="preorder")?"preorder":"unavailable";
-  result.detail=available.length?`Bestand für ${available.length} Filiale${available.length>1?"n":""} gemeldet; Wareneingang nicht belegt`:result.status==="preorder"?"Nachlieferung angekündigt; keine sofort verfügbare Ware":"Gemeldeter Filialbestand: 0";
+  result.detail=available.length?`Bestand für ${available.length} Filiale${available.length>1?"n":""} gemeldet${available.some(b=>b.quantity===null)?"; Stückzahl offen":""}; Wareneingang nicht belegt`:result.status==="preorder"?"Nachlieferung angekündigt; keine sofort verfügbare Ware":"In den gemeldeten Filialen nicht vorrätig";
   return result;
 }
 export function stockTransition(result:Result, previous:string|null) {
@@ -108,7 +110,7 @@ export function stockTransition(result:Result, previous:string|null) {
   // Missing, blocked or partial responses do not mean that a previously seen store sold out.
   return {newStock:changes.length>0,changes,value:observed.length?JSON.stringify({scope:"store-v1",stocks}):previous};
 }
-export function canNotify(result:Result) {return result.channel==="store" && result.status==="available" && result.branches.some(b=>b.status==="available" && b.quantity>0);}
+export function canNotify(result:Result) {return result.channel==="store" && result.status==="available" && result.branches.some(hasBranchStock);}
 export async function fetchRetail(value:string) {
   let url=retailUrl(value);
   const retailer=hosts[url.hostname];

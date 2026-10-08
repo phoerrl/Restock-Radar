@@ -5,6 +5,7 @@ import { blank, fetchRetail, hosts, parsePage, retailUrl, type Result } from "./
 import { priceState, readBranches, uvpTransition, validateReference } from "./pricing.ts";
 import { normalizePlace } from "./place.ts";
 import { catalogSeeds } from "./set-catalog.ts";
+import { hasBranchStock } from "./branch-stock.ts";
 
 export const setCatalogVersion = "setCatalog20261007V1";
 
@@ -48,7 +49,7 @@ export async function snapshot(){
     if(!directory.has(key))directory.set(key,{retailer:m.retailer,name:b.name,address:b.address,url:m.url});
   }
   const ordered=[...directory.values()].sort((a,b)=>a.retailer.localeCompare(b.retailer,"de")||a.name.localeCompare(b.name,"de"));
-  const pricedDrops=drops.results.map((d:any)=>({...d,branches:readBranches(d.branch_stock)})).filter((d:any)=>d.branches.length>0 && d.branches.every((b:any)=>b.status==="available" && b.quantity>0 && priceState(b.price,d)==="eligible"));
+  const pricedDrops=drops.results.map((d:any)=>({...d,branches:readBranches(d.branch_stock)})).filter((d:any)=>d.branches.length>0 && d.branches.every((b:any)=>hasBranchStock(b) && priceState(b.price,d)==="eligible"));
   return {monitors:physical,drops:pricedDrops,retailers,stores:ordered,devices:deviceCount?.n??0,settings:storeSettings(settings),schedulerAt:schedulerAt?Number(schedulerAt):null,schedule: schedule?JSON.parse(schedule):null,backgroundError:backgroundError||null,backgroundStartedAt:backgroundStartedAt?Number(backgroundStartedAt):null,publicKey:vars.VAPID_PUBLIC_KEY??null,lastScan:Math.max(0,...physical.map((m:any)=>Number(m.checked_at)||0))||null,now:Date.now()};
 }
 export function pushEndpoint(endpoint:string){
@@ -139,10 +140,10 @@ export async function scan(background=false){
     const pending=await db.prepare("SELECT drops.*,monitors.branch_stock AS current_branches,monitors.uvp_price AS current_uvp_price,monitors.uvp_source AS current_uvp_source FROM drops JOIN monitors ON monitors.id=drops.monitor_id WHERE monitors.enabled=1 AND monitors.kind='product' AND drops.channel='store' AND drops.location IS NOT NULL AND drops.uvp_price IS NOT NULL AND drops.uvp_source IS NOT NULL AND drops.push_state='pending' AND drops.created_at>? ORDER BY drops.created_at LIMIT 8").bind(Date.now()-600000).all<any>();
     for(const drop of pending.results){
       const evidence=readBranches(drop.branch_stock);
-      if(!evidence.length || evidence.some(b=>b.status!=="available" || b.quantity<=0 || priceState(b.price,drop)!=="eligible"))continue;
+      if(!evidence.length || evidence.some(b=>!hasBranchStock(b) || priceState(b.price,drop)!=="eligible"))continue;
       const current=readBranches(drop.current_branches),reference={uvp_price:drop.current_uvp_price,uvp_source:drop.current_uvp_source};
       const latest=evidence.map(b=>current.find(now=>now.key===b.key));
-      if(latest.some(b=>!b || b.status!=="available" || b.quantity<=0 || priceState(b.price,reference)!=="eligible"))continue;
+      if(latest.some(b=>!b || !hasBranchStock(b) || priceState(b.price,reference)!=="eligible"))continue;
       const prices=[...new Set(latest.map(b=>b!.price!.toFixed(2).replace(".",",")+" €"))].join(" / ");
       const {delivered,failed}=await sendPush({title:`${drop.retailer}: ${drop.kind==="price"?"Jetzt im UVP-Rahmen":drop.kind==="first"?"Filialbestand im UVP-Rahmen":"Wieder verfügbar im UVP-Rahmen"}`,body:`${drop.title} · ${prices} · ${drop.location} · ≤ hinterlegte UVP-Referenz; kein bestätigter Wareneingang`.slice(0,600),url:"/",tag:drop.id});
       if(delivered>0 || failed===0)await db.prepare("UPDATE drops SET push_state=? WHERE id=?").bind(delivered?"sent":"no-device",drop.id).run();
