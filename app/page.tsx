@@ -12,8 +12,9 @@ import { RadarSignals } from "@/components/radar-signals";
 import { RadarMap } from "@/components/radar-map";
 import { SetCatalog } from "@/components/set-catalog";
 import { showcaseDE } from "@/lib/set-catalog";
+import { RadarSources } from "@/components/radar-sources";
 
-const names:Record<string,string>={available:"Filialbestand gemeldet",unavailable:"Filialbestand: 0",unknown:"Bestand offen",blocked:"Abfrage blockiert",error:"Abfrage fehlgeschlagen",preorder:"Keine sofortige Ware"};
+const names:Record<string,string>={available:"Filialbestand gemeldet",unavailable:"In Filiale nicht vorrätig",unknown:"Bestand offen",blocked:"Abfrage blockiert",error:"Abfrage fehlgeschlagen",preorder:"Keine sofortige Ware"};
 const time=(n:number|null)=>n?new Date(n).toLocaleTimeString("de-DE",{timeZone:"Europe/Berlin",hour:"2-digit",minute:"2-digit"}):"Noch keine";
 const date=(n:number)=>new Date(n).toLocaleString("de-DE",{timeZone:"Europe/Berlin",day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
 const euros=(n:number|null)=>n===null?"Preis offen":new Intl.NumberFormat("de-DE",{style:"currency",currency:"EUR"}).format(n);
@@ -108,7 +109,8 @@ export default function Page(){
       {tab!=="signals"&&tab!=="stores"&&tab!=="radar"&&<div className="stats"><div><span>Händler im Verzeichnis</span><strong>{loading?"–":state.retailers.length}</strong></div><div><span>Verzeichnete Filialen</span><strong>{loading?"–":state.stores.length}</strong></div><div><span>Bis UVP-Referenz verfügbar</span><strong>{loading?"–":state.stores.filter(s=>eligibleOffers(s.address,s.retailer).length).length}</strong></div><div><span>Letzte Quellenprüfung</span><strong className="small-stat">{time(state.lastScan)}</strong></div></div>}
       {tab!=="signals"&&tab!=="stores"&&!loading&&!withBranchData&&<div className="data-status"><AlertCircle size={20}/><div><strong>Filialbestandsquelle fehlt noch</strong><p>Für die vorgemerkten Läden liegt noch kein belastbarer Pokémon-Bestand vor. Wareneingänge werden derzeit nicht erkannt.</p></div></div>}
       <div className="monitor-strip"><Radio size={19}/><div><strong>{monitorLabel}</strong><span>{scheduled?`Letzter Hintergrundlauf: ${time(state.schedulerAt)}`:(owner?`Quellenprüfung alle ${state.settings.interval/60} Minuten bei geöffneter App`:"Serverstand wird bei geöffneter App automatisch aktualisiert")}</span></div><button className={`badge ${sub?"available":"neutral"}`} onClick={()=>setTab("push")}>{sub?"Push verbunden":"Push noch aus"}</button></div>
-      <Tabs value={tab} onValueChange={setTab}><TabsList variant="line"><TabsTrigger value="stores"><MapPin/>Karte</TabsTrigger><TabsTrigger value="signals"><Radar/>Heute</TabsTrigger><TabsTrigger value="radar"><Package/>Artikel</TabsTrigger><TabsTrigger value="history"><Clock/>Verlauf</TabsTrigger><TabsTrigger value="push"><Bell/>Push</TabsTrigger></TabsList>
+      <Tabs value={tab} onValueChange={setTab}><TabsList variant="line"><TabsTrigger value="stores"><MapPin/>Karte</TabsTrigger><TabsTrigger value="signals"><Radar/>Heute</TabsTrigger><TabsTrigger value="radar"><Package/>Artikel</TabsTrigger><TabsTrigger value="history"><Clock/>Verlauf</TabsTrigger><TabsTrigger value="sources"><Radio/>Quellen</TabsTrigger><TabsTrigger value="push"><Bell/>Push</TabsTrigger></TabsList>
+        <TabsContent value="sources"><RadarSources snapshot={state} owner={owner}/></TabsContent>
         <TabsContent value="signals"><RadarSignals readOnly={!owner} scanVersion={state.now} reportTarget={reportTarget} onReportOpened={()=>setReportTarget(null)}/></TabsContent>
         <TabsContent value="stores">
           <RadarMap snapshot={state} onReport={store=>{if(!owner){window.location.assign("/admin");return;}setReportTarget(store);setTab("signals");}}/>
